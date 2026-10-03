@@ -4,9 +4,6 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
 const api = axios.create({
   baseURL: API_URL,
-  headers: {
-    'Content-Type': 'application/json',
-  },
 })
 
 // Add auth token to requests
@@ -17,6 +14,19 @@ api.interceptors.request.use((config) => {
   }
   return config
 })
+
+// Add response interceptor to handle auth errors
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      // Token is invalid or expired
+      localStorage.removeItem('token')
+      window.location.href = '/login'
+    }
+    return Promise.reject(error)
+  }
+)
 
 // Auth endpoints
 export const login = async (email: string, password: string) => {
@@ -46,11 +56,8 @@ export const uploadDocument = async (file: File, title?: string, description?: s
   if (title) formData.append('title', title)
   if (description) formData.append('description', description)
 
-  const response = await api.post('/documents/upload', formData, {
-    headers: {
-      'Content-Type': 'multipart/form-data',
-    },
-  })
+  // Don't set Content-Type - let browser set it with boundary
+  const response = await api.post('/documents/upload', formData)
   return response.data
 }
 

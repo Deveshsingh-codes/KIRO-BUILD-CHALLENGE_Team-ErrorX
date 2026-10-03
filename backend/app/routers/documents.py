@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, status, Depends, UploadFile, File
+from fastapi import APIRouter, HTTPException, status, Depends, UploadFile, File, Form
 from app.models.document import DocumentCreate, DocumentUpdate, DocumentResponse, DocumentStatus
 from app.routers.auth import get_current_user
 from app.database.connection import get_database
@@ -25,8 +25,8 @@ def calculate_file_hash(file_path: str) -> str:
 @router.post("/upload", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED)
 async def upload_document(
     file: UploadFile = File(...),
-    title: str = None,
-    description: str = None,
+    title: str = Form(None),
+    description: str = Form(None),
     current_user: dict = Depends(get_current_user)
 ):
     db = get_database()

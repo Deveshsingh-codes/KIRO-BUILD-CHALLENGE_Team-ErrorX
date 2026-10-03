@@ -30,7 +30,27 @@ export default function Dashboard() {
       const docs = await getDocuments()
       setDocuments(docs)
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Failed to load documents')
+      // Safely extract error message
+      let errorMessage = 'Failed to load documents'
+      
+      if (err.response?.data) {
+        const detail = err.response.data.detail
+        if (typeof detail === 'string') {
+          errorMessage = detail
+        } else if (Array.isArray(detail)) {
+          errorMessage = detail.map((e: any) => e.msg || JSON.stringify(e)).join(', ')
+        } else if (typeof detail === 'object') {
+          errorMessage = detail.msg || JSON.stringify(detail)
+        }
+      } else if (err.message) {
+        errorMessage = err.message
+      }
+      
+      if (typeof errorMessage !== 'string') {
+        errorMessage = JSON.stringify(errorMessage)
+      }
+      
+      setError(errorMessage)
     } finally {
       setLoading(false)
     }
@@ -53,7 +73,28 @@ export default function Dashboard() {
       setDescription('')
       await loadDocuments()
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Failed to upload document')
+      // Safely extract error message
+      let errorMessage = 'Failed to upload document'
+      
+      if (err.response?.data) {
+        const detail = err.response.data.detail
+        if (typeof detail === 'string') {
+          errorMessage = detail
+        } else if (Array.isArray(detail)) {
+          // FastAPI validation errors
+          errorMessage = detail.map((e: any) => e.msg || JSON.stringify(e)).join(', ')
+        } else if (typeof detail === 'object') {
+          errorMessage = detail.msg || JSON.stringify(detail)
+        }
+      } else if (err.message) {
+        errorMessage = err.message
+      }
+      
+      if (typeof errorMessage !== 'string') {
+        errorMessage = JSON.stringify(errorMessage)
+      }
+      
+      setError(errorMessage)
     } finally {
       setUploading(false)
     }
@@ -67,7 +108,16 @@ export default function Dashboard() {
       await deleteDocument(id)
       await loadDocuments()
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Failed to delete document')
+      let errorMessage = 'Failed to delete document'
+      if (err.response?.data?.detail && typeof err.response.data.detail === 'string') {
+        errorMessage = err.response.data.detail
+      } else if (err.message) {
+        errorMessage = err.message
+      }
+      if (typeof errorMessage !== 'string') {
+        errorMessage = JSON.stringify(errorMessage)
+      }
+      setError(errorMessage)
     }
   }
 
@@ -77,7 +127,16 @@ export default function Dashboard() {
       await verifyDocument(id)
       await loadDocuments()
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Failed to verify document')
+      let errorMessage = 'Failed to verify document'
+      if (err.response?.data?.detail && typeof err.response.data.detail === 'string') {
+        errorMessage = err.response.data.detail
+      } else if (err.message) {
+        errorMessage = err.message
+      }
+      if (typeof errorMessage !== 'string') {
+        errorMessage = JSON.stringify(errorMessage)
+      }
+      setError(errorMessage)
     }
   }
 
