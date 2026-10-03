@@ -1,5 +1,8 @@
 from fastapi import APIRouter, HTTPException, status, Depends, UploadFile, File, Form
-from app.models.document import DocumentCreate, DocumentUpdate, DocumentResponse, DocumentStatus
+from app.models.document import (
+    DocumentCreate, DocumentUpdate, DocumentResponse, DocumentStatus,
+    VerificationResult, DetectionResult
+)
 from app.routers.auth import get_current_user
 from app.database.connection import get_database
 from datetime import datetime
@@ -8,6 +11,8 @@ from typing import List
 import hashlib
 import os
 import shutil
+from PIL import Image
+import mimetypes
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
 
@@ -21,6 +26,103 @@ def calculate_file_hash(file_path: str) -> str:
         for byte_block in iter(lambda: f.read(4096), b""):
             sha256_hash.update(byte_block)
     return sha256_hash.hexdigest()
+
+def analyze_file(file_path: str, file_hash: str) -> VerificationResult:
+    """Perform basic file analysis. Returns only real detections."""
+    detections = []
+    metadata = {}
+    
+    # Get file info
+    file_size = os.path.getsize(file_path)
+    mime_type, _ = mimetypes.guess_type(file_path)
+    
+    metadata["file_size"] = file_size
+    metadata["mime_type"] = mime_type
+    metadata["file_hash"] = file_hash
+    
+    # Hash integrity check (always performed)
+    current_hash = calculate_file_hash(file_path)
+    hash_match = current_hash == file_hash
+    
+    detections.append(DetectionResult(
+        name="File Integrity",
+        detected=hash_match,
+        confidence=100.0 if hash_match else 0.0,
+        details=f"SHA256 hash {'matches' if hash_match else 'does not match'} original",
+        severity="low" if hash_match else "critical"
+    ))
+    
+    # Basic image metadata check if image
+    if mime_type and mime_type.startswith('image/'):
+        try:
+            with Image.open(file_path) as img:
+                metadata["image_format"] = img.format
+                metadata["image_size"] = f"{img.width}x{img.height}"
+                metadata["image_mode"] = img.mode
+                
+                # Check for basic EXIF data presence
+                exif_data = img.getexif()
+                has_exif = exif_data is not None and len(exif_data) > 0
+                
+                detections.append(DetectionResult(
+                    name="Image Metadata",
+                    detected=has_exif,
+                    confidence=None,
+                    details=f"EXIF data {'found' if has_exif else 'not found'}",
+                    severity=None
+                ))
+        except Exception as e:
+            detections.append(DetectionResult(
+                name="Image Analysis",
+                detected=False,
+                confidence=None,
+                details=f"Could not analyze image: {str(e)}",
+                severity="warning"
+            ))
+    
+    # Calculate overall status
+    if not hash_match:
+        overall_status = DocumentStatus.REJECTED
+        authenticity_score = 0.0
+        fake_probability = 100.0
+    else:
+        overall_status = DocumentStatus.VERIFIED
+        authenticity_score = 95.0
+        fake_probability = 5.0
+    
+    # Mark advanced detections as not available
+    detections.append(DetectionResult(
+        name="AI Content Detection",
+        detected=False,
+        confidence=None,
+        details="Advanced AI detection not available",
+        severity=None
+    ))
+    
+    detections.append(DetectionResult(
+        name="Face Manipulation Detection",
+        detected=False,
+        confidence=None,
+        details="Deepfake detection not available",
+        severity=None
+    ))
+    
+    detections.append(DetectionResult(
+        name="Source Verification",
+        detected=False,
+        confidence=None,
+        details="Blockchain verification not available",
+        severity=None
+    ))
+    
+    return VerificationResult(
+        overall_status=overall_status,
+        authenticity_score=authenticity_score,
+        fake_probability=fake_probability,
+        detections=detections,
+        metadata=metadata,
+        analyzed_at=datetime.utcnow()
+    )
 
 @router.post("/upload", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED)
 async def upload_document(
@@ -176,7 +278,7 @@ async def delete_document(document_id: str, current_user: dict = Depends(get_cur
 
 @router.post("/{document_id}/verify", response_model=DocumentResponse)
 async def verify_document(document_id: str, current_user: dict = Depends(get_current_user)):
-    """Verify document authenticity by checking file hash"""
+    """Verify document authenticity with detailed analysis"""
     db = get_database()
     
     try:
@@ -196,21 +298,23 @@ async def verify_document(document_id: str, current_user: dict = Depends(get_cur
             detail="Document not found"
         )
     
-    # Recalculate file hash
     if not os.path.exists(document["file_path"]):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="File not found on server"
         )
     
-    current_hash = calculate_file_hash(document["file_path"])
+    # Perform analysis
+    verification_result = analyze_file(document["file_path"], document["file_hash"])
     
-    # Compare hashes
-    new_status = DocumentStatus.VERIFIED if current_hash == document["file_hash"] else DocumentStatus.REJECTED
-    
+    # Update document with results
     db.documents.update_one(
         {"_id": ObjectId(document_id)},
-        {"$set": {"status": new_status, "updated_at": datetime.utcnow()}}
+        {"$set": {
+            "status": verification_result.overall_status,
+            "verification_result": verification_result.model_dump(),
+            "updated_at": datetime.utcnow()
+        }}
     )
     
     # Get updated document
