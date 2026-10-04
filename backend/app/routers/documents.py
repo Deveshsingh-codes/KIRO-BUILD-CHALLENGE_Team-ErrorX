@@ -28,6 +28,82 @@ def calculate_file_hash(file_path: str) -> str:
             sha256_hash.update(byte_block)
     return sha256_hash.hexdigest()
 
+def detect_ai_generation_signals(img: Image.Image) -> tuple[bool, float, str, list]:
+    """
+    Detect AI-generation indicators using statistical image analysis.
+    Returns: (detected, confidence, details, risk_list)
+    """
+    ai_indicators = []
+    ai_confidence = 0.0
+    
+    try:
+        # Convert to numpy for analysis
+        img_array = np.array(img.convert('RGB'))
+        height, width = img_array.shape[:2]
+        
+        # 1. Check for unnatural color distribution
+        # AI images often have smoother color transitions
+        color_variance = np.var(img_array, axis=(0, 1)).mean()
+        if color_variance < 500:  # Very smooth
+            ai_indicators.append("Unusually smooth color distribution")
+            ai_confidence += 15.0
+        
+        # 2. Check for texture repetition patterns
+        # AI generators sometimes create repetitive patterns
+        gray = np.mean(img_array, axis=2).astype(np.uint8)
+        
+        # Sample regions and compare
+        if height > 100 and width > 100:
+            region1 = gray[10:50, 10:50]
+            region2 = gray[height-50:height-10, width-50:width-10]
+            correlation = np.corrcoef(region1.flatten(), region2.flatten())[0, 1]
+            
+            if correlation > 0.85:  # High similarity in distant regions
+                ai_indicators.append("Repetitive texture patterns detected")
+                ai_confidence += 20.0
+        
+        # 3. Check for synthetic metadata indicators
+        # AI tools often lack proper camera EXIF or have suspicious software tags
+        exif = img.getexif()
+        if exif:
+            software_tag = exif.get(305, "")  # Software tag
+            if any(keyword in str(software_tag).lower() for keyword in 
+                   ['stable', 'diffusion', 'midjourney', 'dall', 'generate', 'ai', 'synthetic']):
+                ai_indicators.append(f"AI generation software detected: {software_tag}")
+                ai_confidence += 40.0
+        
+        # 4. Check aspect ratio - AI often uses specific ratios
+        aspect_ratio = width / height if height > 0 else 1.0
+        common_ai_ratios = [1.0, 1.5, 0.666, 2.0, 0.5]  # Square, 3:2, 2:3, 2:1, 1:2
+        if any(abs(aspect_ratio - ratio) < 0.05 for ratio in common_ai_ratios):
+            if width % 64 == 0 and height % 64 == 0:  # Divisible by 64 (common in AI models)
+                ai_indicators.append(f"Dimensions ({width}x{height}) match AI model output")
+                ai_confidence += 15.0
+        
+        # 5. Check for noise characteristics
+        # Natural photos have more noise, AI images are often too clean
+        noise_level = np.std(img_array)
+        if noise_level < 20:  # Very low noise
+            ai_indicators.append("Unnaturally low noise level")
+            ai_confidence += 10.0
+        
+        # Cap confidence
+        ai_confidence = min(ai_confidence, 95.0)
+        
+        detected = ai_confidence > 30.0  # Threshold for positive detection
+        
+        if detected:
+            details = f"AI generation indicators detected (confidence: {ai_confidence:.1f}%): " + "; ".join(ai_indicators)
+        elif ai_confidence > 10.0:
+            details = f"Weak AI generation signals detected ({ai_confidence:.1f}%): " + "; ".join(ai_indicators)
+        else:
+            details = "No significant AI generation indicators detected"
+        
+        return detected, ai_confidence, details, ai_indicators
+        
+    except Exception as e:
+        return False, 0.0, f"AI detection analysis failed: {str(e)}", []
+
 def analyze_file(file_path: str, file_hash: str) -> VerificationResult:
     """Perform file analysis based on available signals."""
     detections = []
@@ -69,6 +145,8 @@ def analyze_file(file_path: str, file_hash: str) -> VerificationResult:
     # Image-specific analysis
     has_exif = False
     is_image = mime_type and mime_type.startswith('image/')
+    ai_generation_detected = False
+    ai_confidence = 0.0
     
     if is_image:
         try:
@@ -77,12 +155,45 @@ def analyze_file(file_path: str, file_hash: str) -> VerificationResult:
                 metadata["image_size"] = f"{img.width}x{img.height}"
                 metadata["image_mode"] = img.mode
                 
+                # AI generation detection (statistical analysis)
+                ai_detected, ai_conf, ai_details, ai_indicators = detect_ai_generation_signals(img)
+                ai_generation_detected = ai_detected
+                ai_confidence = ai_conf
+                
+                if ai_generation_detected:
+                    risk_factors.append("AI generation indicators detected")
+                    for indicator in ai_indicators:
+                        risk_factors.append(indicator)
+                    
+                    detections.append(DetectionResult(
+                        name="AI Content Detection",
+                        detected=True,
+                        confidence=ai_confidence,
+                        details=ai_details,
+                        severity="high" if ai_confidence > 60 else "warning"
+                    ))
+                elif ai_conf > 10.0:
+                    detections.append(DetectionResult(
+                        name="AI Content Detection",
+                        detected=False,
+                        confidence=ai_confidence,
+                        details=ai_details,
+                        severity="warning"
+                    ))
+                else:
+                    detections.append(DetectionResult(
+                        name="AI Content Detection",
+                        detected=False,
+                        confidence=ai_confidence,
+                        details=ai_details,
+                        severity=None
+                    ))
+                
                 # EXIF metadata check
                 exif_data = img.getexif()
                 has_exif = exif_data is not None and len(exif_data) > 0
                 
                 if has_exif:
-                    confidence_factors.append("Original metadata present")
                     exif_details = f"EXIF data found ({len(exif_data)} fields)"
                     
                     # Extract useful EXIF info
@@ -92,6 +203,17 @@ def analyze_file(file_path: str, file_hash: str) -> VerificationResult:
                         metadata["camera_model"] = str(exif_data[272])
                     if 306 in exif_data:  # DateTime
                         metadata["date_taken"] = str(exif_data[306])
+                    
+                    # Check if EXIF looks synthetic
+                    software = exif_data.get(305, "")
+                    if any(kw in str(software).lower() for kw in ['stable', 'diffusion', 'midjourney', 'dall', 'ai']):
+                        risk_factors.append("Synthetic EXIF metadata")
+                        exif_details += " - AI generation software detected in EXIF"
+                    elif metadata.get("camera_make") and metadata.get("camera_model"):
+                        confidence_factors.append("Camera metadata present")
+                    else:
+                        # Has EXIF but no camera info - suspicious
+                        risk_factors.append("EXIF present but lacks camera information")
                 else:
                     risk_factors.append("No camera metadata")
                     exif_details = "EXIF data not found - may indicate screenshot, synthetic image, or metadata stripping"
@@ -111,7 +233,8 @@ def analyze_file(file_path: str, file_hash: str) -> VerificationResult:
                     risk_factors.append("Format often used for generated content")
                 elif img.format == 'JPEG':
                     format_analysis += " - typical camera output format"
-                    confidence_factors.append("Standard photo format")
+                    if not ai_generation_detected and has_exif and metadata.get("camera_make"):
+                        confidence_factors.append("Standard photo format with camera data")
                 
                 detections.append(DetectionResult(
                     name="File Format Analysis",
@@ -130,15 +253,23 @@ def analyze_file(file_path: str, file_hash: str) -> VerificationResult:
                 details=f"Could not analyze image: {str(e)}",
                 severity="warning"
             ))
-    
-    # Mark advanced AI detections as unavailable
-    detections.append(DetectionResult(
-        name="AI Content Detection",
-        detected=False,
-        confidence=None,
-        details="ML-based AI detection not available - requires trained model integration",
-        severity=None
-    ))
+            # Also add AI detection failure
+            detections.append(DetectionResult(
+                name="AI Content Detection",
+                detected=False,
+                confidence=None,
+                details=f"Analysis failed: {str(e)}",
+                severity=None
+            ))
+    else:
+        # Non-image files
+        detections.append(DetectionResult(
+            name="AI Content Detection",
+            detected=False,
+            confidence=None,
+            details="Not applicable for non-image files",
+            severity=None
+        ))
     
     detections.append(DetectionResult(
         name="Deepfake Detection",
@@ -160,10 +291,17 @@ def analyze_file(file_path: str, file_hash: str) -> VerificationResult:
     if not hash_match:
         overall_status = DocumentStatus.REJECTED
         status_reason = "File integrity check failed"
+    elif ai_generation_detected and ai_confidence > 60:
+        # Strong AI generation signal overrides other factors
+        overall_status = DocumentStatus.SUSPICIOUS
+        status_reason = f"AI generation detected (confidence: {ai_confidence:.1f}%)"
+    elif len(risk_factors) >= 3:
+        overall_status = DocumentStatus.SUSPICIOUS
+        status_reason = f"Multiple risk indicators: {', '.join(risk_factors[:3])}"
     elif len(risk_factors) >= 2:
         overall_status = DocumentStatus.SUSPICIOUS
-        status_reason = f"Multiple risk indicators: {', '.join(risk_factors)}"
-    elif len(confidence_factors) >= 2:
+        status_reason = f"Risk indicators: {', '.join(risk_factors)}"
+    elif len(confidence_factors) >= 2 and not ai_generation_detected:
         overall_status = DocumentStatus.VERIFIED
         status_reason = f"Passed available checks: {', '.join(confidence_factors)}"
     else:
@@ -174,21 +312,24 @@ def analyze_file(file_path: str, file_hash: str) -> VerificationResult:
     metadata["risk_factors"] = risk_factors
     metadata["confidence_factors"] = confidence_factors
     
-    # Do NOT return fake scores - only return when meaningful
+    # Calculate confidence scores based on real signals
     authenticity_score = None
     fake_probability = None
     
     if not hash_match:
-        # Clear manipulation detected
         authenticity_score = 0.0
         fake_probability = 100.0
+    elif ai_generation_detected:
+        # AI detected - use AI confidence as fake probability
+        fake_probability = ai_confidence
+        authenticity_score = 100.0 - fake_probability
     elif overall_status == DocumentStatus.VERIFIED and len(confidence_factors) >= 2:
-        # Multiple positive signals - cap at 100
+        # Multiple positive signals
         authenticity_score = min(float(len(confidence_factors) * 25 + 25), 100.0)
         fake_probability = 100.0 - authenticity_score
     elif overall_status == DocumentStatus.SUSPICIOUS:
         # Risk factors present
-        fake_probability = min(float(len(risk_factors) * 25 + 30), 95.0)
+        fake_probability = min(float(len(risk_factors) * 20 + 30), 90.0)
         authenticity_score = 100.0 - fake_probability
     # Otherwise leave as None (inconclusive)
     
