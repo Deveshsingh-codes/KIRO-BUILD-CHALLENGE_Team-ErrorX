@@ -4,6 +4,7 @@ import Login from './pages/Login'
 import Register from './pages/Register'
 import Dashboard from './pages/Dashboard'
 import VerificationGuide from './pages/VerificationGuide'
+import Chatbot from './components/Chatbot'
 import './App.css'
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
@@ -49,6 +50,7 @@ function App() {
             />
             <Route path="/guide" element={<VerificationGuide />} />
           </Routes>
+          <Chatbot />
         </div>
       </AuthProvider>
     </Router>

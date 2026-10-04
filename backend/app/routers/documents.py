@@ -208,34 +208,33 @@ def analyze_file(file_path: str, file_hash: str) -> VerificationResult:
                     # Check if EXIF looks synthetic
                     software = exif_data.get(305, "")
                     if any(kw in str(software).lower() for kw in ['stable', 'diffusion', 'midjourney', 'dall', 'ai']):
-                        risk_factors.append("Synthetic EXIF metadata")
-                        exif_details += " - AI generation software detected in EXIF"
+                        risk_factors.append("AI generation software detected in EXIF")
+                        exif_details += " - AI generation software detected"
                     elif metadata.get("camera_make") and metadata.get("camera_model"):
                         confidence_factors.append("Camera metadata present")
-                    else:
-                        # Has EXIF but no camera info - suspicious
-                        risk_factors.append("EXIF present but lacks camera information")
+                        exif_details += " - Camera information verified"
+                    # Note: EXIF without camera data is neutral, not suspicious
                 else:
-                    risk_factors.append("No camera metadata")
-                    exif_details = "EXIF data not found - may indicate screenshot, synthetic image, or metadata stripping"
+                    # Missing EXIF is NORMAL for many legitimate images
+                    exif_details = "No EXIF metadata - common for screenshots, social media images, or edited photos"
                 
                 detections.append(DetectionResult(
                     name="Metadata Analysis",
                     detected=has_exif,
                     confidence=None,
                     details=exif_details,
-                    severity="warning" if not has_exif else None
+                    severity=None  # Not a warning - missing EXIF is normal
                 ))
                 
                 # File format analysis
                 format_analysis = f"Image format: {img.format}"
                 if img.format in ['PNG', 'WEBP']:
-                    format_analysis += " - commonly used for synthetic/edited images"
-                    risk_factors.append("Format often used for generated content")
+                    format_analysis += " - common for screenshots and web images"
+                    # PNG/WEBP alone is NOT a risk factor - very common for legitimate images
                 elif img.format == 'JPEG':
-                    format_analysis += " - typical camera output format"
+                    format_analysis += " - standard photo format"
                     if not ai_generation_detected and has_exif and metadata.get("camera_make"):
-                        confidence_factors.append("Standard photo format with camera data")
+                        confidence_factors.append("Camera photo with metadata")
                 
                 detections.append(DetectionResult(
                     name="File Format Analysis",
@@ -293,19 +292,27 @@ def analyze_file(file_path: str, file_hash: str) -> VerificationResult:
         overall_status = DocumentStatus.REJECTED
         status_reason = "File integrity check failed"
     elif ai_generation_detected and ai_confidence > 60:
-        # Strong AI generation signal overrides other factors
+        # Strong AI generation signal
         overall_status = DocumentStatus.SUSPICIOUS
         status_reason = f"AI generation detected (confidence: {ai_confidence:.1f}%)"
+    elif ai_generation_detected and ai_confidence > 40:
+        # Moderate AI signal
+        overall_status = DocumentStatus.MANUAL_REVIEW
+        status_reason = f"Possible AI generation (confidence: {ai_confidence:.1f}%) - manual review recommended"
     elif len(risk_factors) >= 3:
+        # Multiple risk factors
         overall_status = DocumentStatus.SUSPICIOUS
         status_reason = f"Multiple risk indicators: {', '.join(risk_factors[:3])}"
-    elif len(risk_factors) >= 2:
-        overall_status = DocumentStatus.SUSPICIOUS
-        status_reason = f"Risk indicators: {', '.join(risk_factors)}"
-    elif len(confidence_factors) >= 2 and not ai_generation_detected:
+    elif len(confidence_factors) >= 1 and not ai_generation_detected:
+        # Has positive signals and no AI detected
         overall_status = DocumentStatus.VERIFIED
         status_reason = f"Passed available checks: {', '.join(confidence_factors)}"
+    elif len(risk_factors) == 0 and not ai_generation_detected:
+        # No risk factors, no AI detected - normal image
+        overall_status = DocumentStatus.VERIFIED
+        status_reason = "No suspicious indicators detected in available checks"
     else:
+        # Insufficient data
         overall_status = DocumentStatus.MANUAL_REVIEW
         status_reason = "Insufficient data for automated classification"
     
@@ -321,16 +328,19 @@ def analyze_file(file_path: str, file_hash: str) -> VerificationResult:
         authenticity_score = 0.0
         fake_probability = 100.0
     elif ai_generation_detected:
-        # AI detected - use AI confidence as fake probability
+        # AI detected - use AI confidence
         fake_probability = ai_confidence
         authenticity_score = 100.0 - fake_probability
-    elif overall_status == DocumentStatus.VERIFIED and len(confidence_factors) >= 2:
-        # Multiple positive signals
-        authenticity_score = min(float(len(confidence_factors) * 25 + 25), 100.0)
+    elif overall_status == DocumentStatus.VERIFIED:
+        # Verified - high authenticity
+        base_score = 75.0
+        if len(confidence_factors) >= 2:
+            base_score = 90.0
+        authenticity_score = min(base_score, 95.0)
         fake_probability = 100.0 - authenticity_score
     elif overall_status == DocumentStatus.SUSPICIOUS:
-        # Risk factors present
-        fake_probability = min(float(len(risk_factors) * 20 + 30), 90.0)
+        # Suspicious - calculate based on risk factors
+        fake_probability = min(float(len(risk_factors) * 20 + 40), 85.0)
         authenticity_score = 100.0 - fake_probability
     # Otherwise leave as None (inconclusive)
     
