@@ -50,14 +50,20 @@ export const getDocument = async (id: string) => {
   return response.data
 }
 
-export const uploadDocument = async (file: File, title?: string, description?: string) => {
+export const uploadDocument = async (file: File, title?: string, description?: string, documentType?: string) => {
   const formData = new FormData()
   formData.append('file', file)
   if (title) formData.append('title', title)
   if (description) formData.append('description', description)
+  if (documentType) formData.append('document_type', documentType)
 
   // Don't set Content-Type - let browser set it with boundary
   const response = await api.post('/documents/upload', formData)
+  return response.data
+}
+
+export const verifyIdDocument = async (id: string) => {
+  const response = await api.post(`/documents/${id}/verify-document`)
   return response.data
 }
 

@@ -10,6 +10,14 @@ class DocumentStatus(str, Enum):
     SUSPICIOUS = "suspicious"
     MANUAL_REVIEW = "manual_review"
 
+class DocumentType(str, Enum):
+    GENERAL = "general"
+    AADHAAR = "aadhaar"
+    PAN = "pan"
+    RATION_CARD = "ration_card"
+    DRIVING_LICENCE = "driving_licence"
+    DEATH_CERTIFICATE = "death_certificate"
+
 class DetectionResult(BaseModel):
     name: str
     detected: bool
@@ -44,9 +52,25 @@ class DocumentResponse(BaseModel):
     file_path: str
     file_hash: str
     status: DocumentStatus
+    document_type: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     verification_result: Optional[VerificationResult] = None
+    document_verification_result: Optional[Dict[str, Any]] = None
     
     class Config:
         from_attributes = True
+
+class DocumentVerificationResult(BaseModel):
+    document_type_detected: Optional[str] = None
+    document_type_match: bool = False
+    extracted_text: str = ""
+    extracted_fields: Dict[str, Any] = {}
+    structure_check: DetectionResult
+    manipulation_check: DetectionResult
+    text_consistency: DetectionResult
+    field_validations: List[DetectionResult] = []
+    overall_status: DocumentStatus
+    confidence_score: Optional[float] = None
+    limitations: List[str] = []
+    analyzed_at: datetime

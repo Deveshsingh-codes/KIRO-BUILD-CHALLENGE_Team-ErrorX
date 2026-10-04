@@ -1,19 +1,20 @@
 from fastapi import APIRouter, HTTPException, status, Depends, UploadFile, File, Form
 from app.models.document import (
     DocumentCreate, DocumentUpdate, DocumentResponse, DocumentStatus,
-    VerificationResult, DetectionResult
+    VerificationResult, DetectionResult, DocumentVerificationResult
 )
 from app.routers.auth import get_current_user
 from app.database.connection import get_database
 from datetime import datetime
 from bson import ObjectId
-from typing import List
+from typing import List, Optional
 import hashlib
 import os
 import shutil
 from PIL import Image
 import mimetypes
 import numpy as np
+from app.analysis.document import ocr, verification
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
 
@@ -347,6 +348,7 @@ async def upload_document(
     file: UploadFile = File(...),
     title: str = Form(None),
     description: str = Form(None),
+    document_type: str = Form(None),  # For document verification
     current_user: dict = Depends(get_current_user)
 ):
     db = get_database()
@@ -377,6 +379,7 @@ async def upload_document(
         "file_path": file_path,
         "file_hash": file_hash,
         "status": DocumentStatus.PENDING,
+        "document_type": document_type,
         "created_at": datetime.utcnow(),
         "updated_at": datetime.utcnow()
     }
@@ -540,3 +543,162 @@ async def verify_document(document_id: str, current_user: dict = Depends(get_cur
     updated_document["id"] = str(updated_document["_id"])
     
     return DocumentResponse(**updated_document)
+
+
+@router.post("/{document_id}/verify-document", response_model=DocumentResponse)
+async def verify_id_document(document_id: str, current_user: dict = Depends(get_current_user)):
+    """Verify ID document (Aadhaar, PAN, etc.) with OCR and authenticity checks"""
+    db = get_database()
+    
+    try:
+        document = db.documents.find_one({
+            "_id": ObjectId(document_id),
+            "user_id": str(current_user["_id"])
+        })
+    except:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid document ID"
+        )
+    
+    if not document:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found"
+        )
+    
+    if not os.path.exists(document["file_path"]):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="File not found on server"
+        )
+    
+    file_path = document["file_path"]
+    selected_doc_type = document.get("document_type", "general")
+    
+    try:
+        # Step 1: OCR - Extract text
+        extracted_text = ocr.extract_text(file_path)
+        
+        # Step 2: Detect document type
+        detected_type = ocr.detect_document_type(extracted_text)
+        type_match = detected_type == selected_doc_type if detected_type else False
+        
+        # Step 3: Extract fields based on document type
+        extracted_fields = {}
+        if detected_type:
+            extracted_fields = ocr.extract_document_fields(detected_type, extracted_text)
+        elif selected_doc_type != "general":
+            extracted_fields = ocr.extract_document_fields(selected_doc_type, extracted_text)
+        
+        # Step 4: Structure check
+        structure_ok, structure_conf, structure_details = verification.check_document_structure(
+            file_path, selected_doc_type
+        )
+        structure_check = DetectionResult(
+            name="Document Structure",
+            detected=structure_ok,
+            confidence=structure_conf,
+            details=structure_details,
+            severity="warning" if not structure_ok else None
+        )
+        
+        # Step 5: Manipulation check
+        manip_detected, manip_conf, manip_details, manip_findings = verification.check_image_manipulation(file_path)
+        manipulation_check = DetectionResult(
+            name="Image Manipulation",
+            detected=manip_detected,
+            confidence=manip_conf,
+            details=manip_details,
+            severity="high" if manip_detected else None
+        )
+        
+        # Step 6: Text consistency
+        text_consistent, text_details = verification.check_text_consistency(extracted_text, extracted_fields)
+        text_consistency_check = DetectionResult(
+            name="Text Consistency",
+            detected=text_consistent,
+            confidence=None,
+            details=text_details,
+            severity="warning" if not text_consistent else None
+        )
+        
+        # Step 7: Field validations
+        field_validations = []
+        for field_name, field_value in extracted_fields.items():
+            is_valid, validation_msg = verification.validate_field_format(
+                field_name, field_value, selected_doc_type
+            )
+            field_validations.append(DetectionResult(
+                name=f"{field_name.replace('_', ' ').title()} Format",
+                detected=is_valid,
+                confidence=None,
+                details=validation_msg,
+                severity="warning" if not is_valid else None
+            ))
+        
+        # Calculate overall status
+        risk_count = sum([
+            not structure_ok,
+            manip_detected,
+            not text_consistent,
+            not type_match if detected_type else False
+        ])
+        
+        if risk_count >= 2:
+            overall_status = DocumentStatus.SUSPICIOUS
+            confidence_score = 30.0
+        elif risk_count == 1:
+            overall_status = DocumentStatus.MANUAL_REVIEW
+            confidence_score = 60.0
+        elif structure_ok and text_consistent:
+            overall_status = DocumentStatus.VERIFIED
+            confidence_score = 85.0
+        else:
+            overall_status = DocumentStatus.MANUAL_REVIEW
+            confidence_score = 50.0
+        
+        # Limitations
+        limitations = [
+            "Official issuer verification not available",
+            "OCR accuracy depends on image quality",
+            "Visual checks only - cannot verify against government database"
+        ]
+        
+        # Build result
+        doc_verification_result = DocumentVerificationResult(
+            document_type_detected=detected_type,
+            document_type_match=type_match,
+            extracted_text=extracted_text[:500] if extracted_text else "",  # Truncate for storage
+            extracted_fields=extracted_fields,
+            structure_check=structure_check,
+            manipulation_check=manipulation_check,
+            text_consistency=text_consistency_check,
+            field_validations=field_validations,
+            overall_status=overall_status,
+            confidence_score=confidence_score,
+            limitations=limitations,
+            analyzed_at=datetime.utcnow()
+        )
+        
+        # Update document
+        db.documents.update_one(
+            {"_id": ObjectId(document_id)},
+            {"$set": {
+                "status": overall_status,
+                "document_verification_result": doc_verification_result.model_dump(),
+                "updated_at": datetime.utcnow()
+            }}
+        )
+        
+        # Get updated document
+        updated_document = db.documents.find_one({"_id": ObjectId(document_id)})
+        updated_document["id"] = str(updated_document["_id"])
+        
+        return DocumentResponse(**updated_document)
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Document verification failed: {str(e)}"
+        )

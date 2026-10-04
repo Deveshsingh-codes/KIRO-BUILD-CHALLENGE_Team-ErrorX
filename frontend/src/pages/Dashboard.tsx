@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import { getDocuments, uploadDocument, deleteDocument, verifyDocument } from '../services/api'
-import { LogOut, Upload, Trash2, CheckCircle, XCircle, AlertCircle, Clock, Shield, FileText } from 'lucide-react'
+import { LogOut, Upload, Trash2, CheckCircle, XCircle, AlertCircle, Clock, Shield, FileText, Image as ImageIcon, FileCheck } from 'lucide-react'
+import DocumentVerification from '../components/DocumentVerification'
 import './Dashboard.css'
 
 interface DetectionResult {
@@ -34,6 +35,7 @@ interface Document {
 }
 
 export default function Dashboard() {
+  const [activeTab, setActiveTab] = useState<'media' | 'document'>('media')
   const [documents, setDocuments] = useState<Document[]>([])
   const [loading, setLoading] = useState(false)
   const [uploading, setUploading] = useState(false)
@@ -327,6 +329,28 @@ export default function Dashboard() {
 
       {error && <div className="error-banner">{error}</div>}
 
+      <div className="verification-tabs">
+        <button
+          className={`tab ${activeTab === 'media' ? 'active' : ''}`}
+          onClick={() => setActiveTab('media')}
+        >
+          <ImageIcon size={18} />
+          Media Verification
+        </button>
+        <button
+          className={`tab ${activeTab === 'document' ? 'active' : ''}`}
+          onClick={() => setActiveTab('document')}
+        >
+          <FileCheck size={18} />
+          Document Verification
+        </button>
+      </div>
+
+      {activeTab === 'document' ? (
+        <div className="document-verification-panel">
+          <DocumentVerification onVerificationComplete={loadDocuments} />
+        </div>
+      ) : (
       <div className="dashboard-layout">
         <div className="sidebar">
           <div className="upload-section">
@@ -474,6 +498,7 @@ export default function Dashboard() {
           )}
         </div>
       </div>
+      )}
     </div>
   )
 }
