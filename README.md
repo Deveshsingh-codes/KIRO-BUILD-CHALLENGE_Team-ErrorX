@@ -34,15 +34,13 @@ A full-stack web application for verifying the integrity of digital documents us
 
 # 🎯 Problem Statement
 
-Digital documents are widely used for education, employment, identity verification, financial services, and official processes.
+## PROBLEM STATEMENT
 
-However, digital files can be modified or replaced without an obvious visual indication. Manual inspection alone cannot reliably determine whether a file has remained unchanged.
+With the rapid growth of **AI-generated images, videos, and digitally manipulated documents**, it is becoming increasingly difficult to distinguish authentic content from fake or altered content. Such content can be used to spread **misinformation, create false claims, impersonate people or organizations, and reduce trust in digital information**.
 
-The core problem is:
+The problem becomes more serious when **fake government documents, identity-related documents, certificates, screenshots, or edited media** are shared online and users have no reliable way to verify their authenticity. Manual verification is often time-consuming, difficult, and dependent on expertise.
 
-> **How can we provide a simple and secure system that allows users to register a document and later verify whether that digital file has been modified?**
-
-The project addresses this problem through cryptographic file fingerprinting and secure document management.
+**Our project addresses this gap by providing a unified platform for analyzing, verifying, and managing digital content through automated verification and document integrity checks, helping users make more informed decisions about the authenticity of the files they receive.**
 
 ---
 
