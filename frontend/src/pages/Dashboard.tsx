@@ -207,22 +207,28 @@ export default function Dashboard() {
             <h2>{getOverallStatusLabel(doc.status)}</h2>
           </div>
 
-          {(result.authenticity_score !== undefined || result.fake_probability !== undefined) && (
+          {(result.authenticity_score !== undefined && result.authenticity_score !== null) || 
+           (result.fake_probability !== undefined && result.fake_probability !== null) ? (
             <div className="confidence-scores">
-              {result.authenticity_score !== undefined && (
+              {result.authenticity_score !== undefined && result.authenticity_score !== null && (
                 <div className="score-card authenticity">
                   <div className="score-label">Estimated Authenticity</div>
                   <div className="score-value">{result.authenticity_score.toFixed(1)}%</div>
-                  <div className="score-note">AI confidence estimate</div>
+                  <div className="score-note">Based on available analysis signals</div>
                 </div>
               )}
-              {result.fake_probability !== undefined && (
+              {result.fake_probability !== undefined && result.fake_probability !== null && (
                 <div className="score-card fake-prob">
-                  <div className="score-label">Estimated Fake Probability</div>
+                  <div className="score-label">Estimated Manipulation Risk</div>
                   <div className="score-value">{result.fake_probability.toFixed(1)}%</div>
-                  <div className="score-note">AI confidence estimate</div>
+                  <div className="score-note">Based on detected risk factors</div>
                 </div>
               )}
+            </div>
+          ) : (
+            <div className="inconclusive-notice">
+              <AlertCircle size={20} />
+              <span>Confidence scores unavailable - insufficient data for quantitative assessment</span>
             </div>
           )}
         </div>
@@ -260,14 +266,42 @@ export default function Dashboard() {
 
         {result.metadata && Object.keys(result.metadata).length > 0 && (
           <div className="metadata-section">
-            <h3>File Metadata</h3>
+            <h3>Analysis Details</h3>
+            {result.metadata.status_reason && (
+              <div className="status-reason">
+                <strong>Why this result?</strong>
+                <p>{result.metadata.status_reason}</p>
+              </div>
+            )}
+            {result.metadata.confidence_factors && result.metadata.confidence_factors.length > 0 && (
+              <div className="factors-list confidence">
+                <h4>✓ Confidence Factors:</h4>
+                <ul>
+                  {result.metadata.confidence_factors.map((factor: string, idx: number) => (
+                    <li key={idx}>{factor}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {result.metadata.risk_factors && result.metadata.risk_factors.length > 0 && (
+              <div className="factors-list risk">
+                <h4>⚠ Risk Factors:</h4>
+                <ul>
+                  {result.metadata.risk_factors.map((factor: string, idx: number) => (
+                    <li key={idx}>{factor}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
             <div className="metadata-grid">
-              {Object.entries(result.metadata).map(([key, value]) => (
-                <div key={key} className="metadata-item">
-                  <span className="metadata-key">{key.replace(/_/g, ' ')}:</span>
-                  <span className="metadata-value">{String(value)}</span>
-                </div>
-              ))}
+              {Object.entries(result.metadata)
+                .filter(([key]) => !['status_reason', 'confidence_factors', 'risk_factors'].includes(key))
+                .map(([key, value]) => (
+                  <div key={key} className="metadata-item">
+                    <span className="metadata-key">{key.replace(/_/g, ' ')}:</span>
+                    <span className="metadata-value">{String(value)}</span>
+                  </div>
+                ))}
             </div>
           </div>
         )}
@@ -383,7 +417,12 @@ export default function Dashboard() {
           {selectedDoc ? (
             <div className="document-details">
               <div className="document-details-header">
-                <h2>{selectedDoc.title}</h2>
+                <div className="header-actions">
+                  <h2>{selectedDoc.title}</h2>
+                  <button onClick={() => setSelectedDoc(null)} className="back-btn">
+                    Back to List
+                  </button>
+                </div>
                 {selectedDoc.description && (
                   <p className="document-description">{selectedDoc.description}</p>
                 )}
@@ -393,9 +432,21 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              {selectedDoc.verification_result ? (
+              {verifying === selectedDoc.id && (
+                <div className="processing-state">
+                  <div className="processing-spinner"></div>
+                  <div className="processing-steps">
+                    <div className="step active">Analyzing file structure...</div>
+                    <div className="step">Extracting metadata...</div>
+                    <div className="step">Checking integrity...</div>
+                    <div className="step">Generating report...</div>
+                  </div>
+                </div>
+              )}
+
+              {selectedDoc.verification_result && !verifying ? (
                 renderVerificationDetails(selectedDoc)
-              ) : (
+              ) : !verifying && (
                 <div className="no-verification">
                   <Shield size={48} />
                   <p>No verification results yet</p>
@@ -413,6 +464,12 @@ export default function Dashboard() {
             <div className="no-selection">
               <FileText size={64} />
               <p>Select a document to view details</p>
+              <div className="guide-link">
+                <button onClick={() => window.location.href = '/guide'} className="guide-btn">
+                  <Shield size={18} />
+                  View Verification Guide
+                </button>
+              </div>
             </div>
           )}
         </div>

@@ -3,6 +3,7 @@ import { AuthProvider, useAuth } from './contexts/AuthContext'
 import Login from './pages/Login'
 import Register from './pages/Register'
 import Dashboard from './pages/Dashboard'
+import VerificationGuide from './pages/VerificationGuide'
 import './App.css'
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
@@ -46,6 +47,7 @@ function App() {
                 </PrivateRoute>
               }
             />
+            <Route path="/guide" element={<VerificationGuide />} />
           </Routes>
         </div>
       </AuthProvider>
